@@ -21,16 +21,13 @@ dependencies:
   # Backend (Supabase)
   supabase_flutter: ^2.18.3
 
-  # IA generativa (Gemini REST)
-  http: ^1.2.2
-
   # Voz (texto a voz / voz a texto)
   flutter_tts: ^4.2.0
   speech_to_text: ^7.0.0
 
   # Geolocalización y mapas
   geolocator: ^13.0.2
-  geocoding: ^3.0.0
+  geocoding: ^4.0.0
   google_maps_flutter: ^2.10.0
 
   # Utilidades

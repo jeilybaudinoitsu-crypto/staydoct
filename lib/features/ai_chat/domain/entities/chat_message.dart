@@ -78,6 +78,9 @@ class AiTurnResult {
 class EmergencyContext {
   const EmergencyContext({
     required this.description,
+    this.incidentId,
+    this.accessToken,
+    this.shareWithGemini = false,
     this.address,
     this.latitude,
     this.longitude,
@@ -89,6 +92,9 @@ class EmergencyContext {
   });
 
   final String description;
+  final String? incidentId;
+  final String? accessToken;
+  final bool shareWithGemini;
   final String? address;
   final double? latitude;
   final double? longitude;

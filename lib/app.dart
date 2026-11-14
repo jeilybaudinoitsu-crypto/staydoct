@@ -70,7 +70,7 @@ class StaydoctApp extends StatelessWidget {
           create: (_) => HospitalRepositoryImpl(supabase),
         ),
         Provider<GeminiAssistantDataSource>(
-          create: (_) => GeminiAssistantDataSource(),
+          create: (_) => GeminiAssistantDataSource(supabase),
         ),
         Provider<LocalTriageAssistant>(
           create: (_) => LocalTriageAssistant(),

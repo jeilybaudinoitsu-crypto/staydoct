@@ -9,7 +9,6 @@ abstract final class AppConstants {
 
   static const Duration locationRefreshInterval = Duration(seconds: 25);
   static const Duration incidentPollInterval = Duration(seconds: 10);
-  static const Duration geminiTimeout = Duration(seconds: 30);
 
   /// Claves de almacenamiento local (SharedPreferences).
   static const String deviceIdKey = 'staydoct.device_id';

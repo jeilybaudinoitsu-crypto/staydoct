@@ -7,7 +7,7 @@ import '../domain/entities/chat_message.dart';
 abstract final class EmergencyPromptBuilder {
   static String systemInstruction(EmergencyContext context) {
     final locationBlock = context.hasLocation
-        ? '''Ubicación ya recibida por GPS: ${context.address ?? 'dirección no disponible'} (${context.latitude!.toStringAsFixed(5)}, ${context.longitude!.toStringAsFixed(5)}). NO vuelvas a pedir la ubicación; ya fue compartida con el servicio de emergencias.'''
+        ? '''La ubicación ya fue compartida con el servicio de emergencias. NO vuelvas a pedirla.'''
         : '''AÚN NO hay ubicación GPS confirmada. Pide al usuario una referencia clara (calle, barrio, lugar visible) mientras se reintenta el GPS. Si es crítico, despacha de todas formas: el sistema seguirá intentando obtener la ubicación.''';
 
     final dispatchBlock = context.alreadyDispatched

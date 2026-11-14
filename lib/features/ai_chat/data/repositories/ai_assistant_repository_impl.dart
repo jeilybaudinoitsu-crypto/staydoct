@@ -28,16 +28,17 @@ class AiAssistantRepositoryImpl implements AiAssistantRepository {
     required EmergencyContext context,
   }) async {
     _lastError = null;
-    if (_gemini.isConfigured) {
-      try {
-        return await _gemini.reply(history: history, context: context);
-      } catch (error) {
-        _lastError = error;
-      }
+    if (!context.shareWithGemini) {
+      return _fallback.reply(history: history, context: context);
+    }
+
+    try {
+      return await _gemini.reply(history: history, context: context);
+    } catch (error) {
+      _lastError = error;
     }
 
     final fallback = await _fallback.reply(history: history, context: context);
-    if (!_gemini.isConfigured) return fallback;
 
     return AiTurnResult(
       text:

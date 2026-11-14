@@ -1,0 +1,4 @@
+project_id = "staydoct"
+
+[functions.gemini-assistant]
+verify_jwt = false

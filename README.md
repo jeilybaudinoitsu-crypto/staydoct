@@ -83,7 +83,7 @@ agendar citas y cirugías, reservar tratamientos y comprar medicamentos.
 | Estado | `provider` + `ChangeNotifier` |
 | Navegación | `go_router` (`StatefulShellRoute.indexedStack`) |
 | Backend | Supabase (PostgreSQL, Auth, RLS, RPC) |
-| IA | Gemini (`gemini-2.0-flash`) vía REST + motor local de respaldo |
+| IA | Gemini (`gemini-2.0-flash`) vía Supabase Edge Function + motor local |
 | Voz | `flutter_tts` + `speech_to_text` |
 | Mapas y ubicación | `google_maps_flutter`, `geolocator`, `geocoding` |
 | Persistencia local | `shared_preferences` |
@@ -105,35 +105,57 @@ agendar citas y cirugías, reservar tratamientos y comprar medicamentos.
 flutter pub get
 
 flutter run \
-  --dart-define=GEMINI_API_KEY=tu_api_key_de_gemini \
   --dart-define=GOOGLE_MAPS_API_KEY=tu_api_key_de_maps
 ```
 
-Sin `GEMINI_API_KEY` la app funciona: el chat usa el protocolo local. Sin
+Gemini se configura en el backend de Supabase; la app conserva el protocolo
+local como alternativa si la función remota no está disponible. Sin
 `GOOGLE_MAPS_API_KEY` se muestra un panel informativo en lugar del mapa.
 
 ### Compilar
 
 ```bash
-# Android: el SDK nativo de Maps lee la clave desde una propiedad de Gradle.
-flutter build apk --release \
+# Android: configura antes android/key.properties y la clave restringida de Maps.
+flutter build appbundle --release \
   -PGOOGLE_MAPS_API_KEY=tu_api_key_de_maps \
-  --dart-define=GEMINI_API_KEY=tu_api_key_de_gemini \
   --dart-define=GOOGLE_MAPS_API_KEY=tu_api_key_de_maps
 
 # iOS: la clave se inyecta con GOOGLE_MAPS_API_KEY en el xcconfig de Xcode
 # (ios/Flutter/Debug.xcconfig y Release.xcconfig).
 flutter build ios --release \
-  --dart-define=GEMINI_API_KEY=tu_api_key_de_gemini \
   --dart-define=GOOGLE_MAPS_API_KEY=tu_api_key_de_maps
 
 # Web: además, descomenta el <script> de Google Maps en web/index.html.
-flutter build web --dart-define=GEMINI_API_KEY=tu_api_key_de_gemini
+flutter build web
 ```
 
 > La clave de Maps debe pasarse dos veces en móvil: como `--dart-define` (para
 > que el widget sepa que hay mapa) y como clave nativa (`-PGOOGLE_MAPS_API_KEY`
 > en Android, `GOOGLE_MAPS_API_KEY` en el xcconfig de iOS).
+
+Para firmar Android en release local, guarda `android/key.properties` (ignorado
+por Git) con `storeFile`, `storePassword`, `keyAlias` y `keyPassword`, y conserva
+el keystore fuera del repositorio. No uses ni compartas la clave de debug.
+
+El workflow [Android APK](.github/workflows/android-apk.yml) crea un APK
+firmado al ejecutarlo manualmente o al subir una etiqueta `v*`; en este último
+caso también adjunta el APK a un GitHub Release. Configura en GitHub Actions
+los secretos `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` y `ANDROID_KEY_PASSWORD`. `GOOGLE_MAPS_API_KEY` es
+opcional; restringe esa clave por aplicación Android y API en Google Cloud. La
+ejecución manual deja el APK como artefacto de Actions.
+
+Para crear la clave de firma una sola vez (fuera del repositorio) en Linux:
+
+```bash
+keytool -genkeypair -v -keystore "$HOME/staydoct-upload.jks" \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+base64 -w 0 "$HOME/staydoct-upload.jks"
+```
+
+Guarda la salida base64 y los datos de alias/contraseñas como los secretos
+indicados en la configuración de GitHub Actions. Conserva una copia segura del
+keystore; la misma clave debe usarse en todas las actualizaciones distribuidas.
 
 ---
 
@@ -146,13 +168,33 @@ Todas se inyectan en tiempo de compilación con `--dart-define` y se leen en
 | --- | --- | --- | --- |
 | `SUPABASE_URL` | No | URL del proyecto incluido | Endpoint de Supabase |
 | `SUPABASE_PUBLISHABLE_KEY` | No | Publishable key incluida | Clave pública de Supabase |
-| `GEMINI_API_KEY` | Recomendada | vacío | Habilita Gemini; si falta, se usa el protocolo local |
-| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Modelo de Gemini |
 | `GOOGLE_MAPS_API_KEY` | Opcional | vacío | Habilita el mapa; si falta, se muestra un panel |
 
 La URL y la *publishable key* de Supabase son públicas por diseño: la seguridad
-real vive en las políticas RLS y en las funciones RPC del backend. **Nunca**
-subas `GEMINI_API_KEY` ni claves privadas al repositorio.
+real vive en las políticas RLS y en las funciones RPC del backend. La clave de
+Gemini solo se configura como secreto de la Edge Function; no la pases con
+`--dart-define` ni la guardes en el repositorio o en el APK.
+
+### Configurar Gemini en el backend
+
+1. Crea una clave en Google AI Studio.
+2. En Supabase Dashboard, abre **Edge Functions → Secrets** y añade
+   `GEMINI_API_KEY`. Opcionalmente, añade `GEMINI_MODEL` para cambiar el modelo
+   del servidor (el valor por defecto es `gemini-2.0-flash`).
+3. Enlaza el directorio con el proyecto Supabase y despliega
+   `supabase/functions/gemini-assistant` con la CLI de Supabase:
+
+   ```bash
+   supabase link --project-ref <project-ref>
+   supabase functions deploy gemini-assistant
+   ```
+
+La función tiene la verificación JWT del gateway desactivada porque la pantalla
+de emergencia permite continuar sin una cuenta. Antes de llamar a Gemini,
+valida el ID y el token de acceso del incidente mediante el RPC
+`get_emergency_status`. No uses una clave `service_role` en la app. La función
+solo recibe texto del incidente y de la conversación; no envía coordenadas ni
+la dirección GPS a Gemini.
 
 ---
 
@@ -251,7 +293,7 @@ lib/
     │
     ├── ai_chat/                  # Agente de triaje
     │   ├── data/
-    │   │   ├── datasources/      # Gemini REST (function calling) + fallback local
+    │   │   ├── datasources/      # Supabase Edge Function + fallback local
     │   │   ├── prompt_builder.dart
     │   │   └── repositories/     # Orquesta Gemini con red de seguridad
     │   ├── domain/
@@ -452,15 +494,18 @@ Detalles relevantes:
 
 ### Gemini
 
-- Llamada REST directa con `http` al endpoint `generateContent` de
-  `gemini-2.0-flash` (configurable con `GEMINI_MODEL`).
+- Gemini se invoca desde una Supabase Edge Function; la clave nunca se incluye
+  en el cliente Android.
 - Function calling con una única herramienta, `dispatch_emergency_services`
   (`severity`, `summary`, `recommendations`, `needs_ambulance`).
 - El prompt del sistema vive en
   [`prompt_builder.dart`](lib/features/ai_chat/data/prompt_builder.dart) y
   incluye reglas de primeros auxilios y de seguridad.
-- Timeout de 30 s; cualquier fallo cae al protocolo local sin cortar la
-  conversación.
+- Antes del primer mensaje se pregunta si se permite enviar el chat a Gemini;
+  sin consentimiento, se usa solo el protocolo local. La ubicación GPS no se
+  añade a la solicitud Gemini.
+- Timeout de 30 s en la Edge Function; cualquier fallo cae al protocolo local
+  sin cortar la conversación.
 
 ### Protocolo local de respaldo
 
@@ -506,7 +551,7 @@ Permisos ya declarados:
 
 ```bash
 flutter analyze   # 0 errores, 0 warnings, 0 infos
-flutter test      # 20 pruebas
+flutter test      # 21 pruebas
 ```
 
 La suite cubre formateo, validaciones, el carrito (incluido el límite de stock)
@@ -522,8 +567,33 @@ tratamientos). El análisis estático está limpio.
 
 - **Staydoct no es un dispositivo médico** y no sustituye la valoración de un
   profesional. La IA ofrece orientación de primeros auxilios, no diagnósticos.
+- **Distribución por GitHub**: al entregar un APK directamente no se completa
+  la declaración de salud de Play Console. Si luego se publica en Play, esa
+  declaración es obligatoria también para pruebas cerradas; selecciona las
+  categorías que correspondan a emergencias, servicios de salud y farmacia.
 - **Datos de ubicación**: son datos sensibles. El modo anónimo los protege con
   token por incidente, hash SHA-256 y RLS; no se exponen por la API REST.
+- **Datos enviados a proveedores**: los mensajes y la descripción de la
+  emergencia se procesan con Gemini para generar respuestas. La ubicación se
+  envía a Supabase para gestionar el incidente, pero no se incluye en la
+  solicitud a Gemini. Antes del primer envío del chat se informa al usuario y
+  se le permite continuar con Gemini o usar solo el protocolo local. La
+  conversación también se almacena en el registro del incidente de Supabase.
+  El dictado de voz usa el proveedor de reconocimiento configurado en el
+  dispositivo; declara también ese tratamiento en la política de privacidad y
+  en Seguridad de datos.
+- **Política de privacidad**: publica una URL accesible y no autenticada que
+  describa datos recogidos, ubicación, micrófono/dictado, historial, Gemini,
+  Supabase, conservación, contacto del responsable y eliminación de datos.
+  Si se publica en Play, añade esa URL en Play Console y completa Seguridad de
+  datos con información coherente con la política y el comportamiento real.
+- **Cuenta y eliminación de datos**: el perfil actual solo permite cerrar
+  sesión. Para Play, implementa la eliminación de cuentas/datos desde la app y
+  publica un enlace web para solicitarla. No declares que hay eliminación
+  hasta que el flujo funcione.
+- **Identificador Android**: los APK ahora usan `app.staydoct.mobile`. Si luego
+  publicas en Google Play, confirma que ese ID esté disponible y no lo cambies
+  después de distribuir la app.
 - **Recetas**: el esquema marca `prescriptions.requires_prescription`, pero el
   checkout actual **no bloquea** la compra de medicamentos que la requieren.
   Antes de un despliegue real hay que:
@@ -533,8 +603,9 @@ tratamientos). El análisis estático está limpio.
 - **Consentimiento y retención**: define política de retención de incidentes y
   conversaciones, y avisa al usuario de que su ubicación se comparte con los
   servicios de emergencia.
-- **Claves**: `GEMINI_API_KEY`, `GOOGLE_MAPS_API_KEY` y cualquier secreto deben
-  inyectarse en build/CI, nunca commitearse.
+- **Claves**: `GEMINI_API_KEY` debe permanecer como secreto de Supabase.
+  `GOOGLE_MAPS_API_KEY` es una clave de cliente y debe restringirse en Google
+  Cloud al ID de paquete y a las APIs usadas.
 
 ---
 

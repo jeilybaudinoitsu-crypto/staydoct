@@ -35,6 +35,7 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
   final _scroll = ScrollController();
   Timer? _syncTimer;
   int _tick = 0;
+  bool? _shareWithGemini;
 
   @override
   void initState() {
@@ -83,8 +84,51 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
   Future<void> _send() async {
     final text = _input.text.trim();
     if (text.isEmpty) return;
+    if (!await _ensureGeminiChoice()) return;
+
     _input.clear();
     await _controller.sendMessage(text);
+  }
+
+  Future<void> _sendVoice() async {
+    if (!await _ensureGeminiChoice()) return;
+    await _controller.sendVoiceMessage();
+  }
+
+  Future<bool> _ensureGeminiChoice() async {
+    if (_shareWithGemini == null) {
+      final consent = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Uso del asistente de IA'),
+          content: const Text(
+            'Si eliges usar Gemini, se enviarán a Google la descripción de '
+            'la emergencia y los mensajes de esta conversación para generar '
+            'orientación. Staydoct no añade tu dirección ni coordenadas GPS a '
+            'esa solicitud, aunque cualquier dato que escribas en el chat '
+            'podría compartirse. Los mensajes también se guardan en el registro '
+            'del incidente de Staydoct. Puedes continuar con el protocolo '
+            'local sin enviar el chat a Gemini. La IA no sustituye al 123 ni '
+            'a profesionales de salud. Si usas dictado, el servicio de voz '
+            'configurado en tu dispositivo procesa el audio para transcribirlo.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Usar protocolo local'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continuar con Gemini'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || consent == null) return false;
+      _shareWithGemini = consent;
+      _controller.setGeminiConsent(consent);
+    }
+    return true;
   }
 
   Future<void> _dispatchNow() async {
@@ -261,7 +305,7 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
                   isListening: controller.isListening,
                   isSending: controller.isSending,
                   onSend: _send,
-                  onMic: controller.sendVoiceMessage,
+                  onMic: _sendVoice,
                   onStopListening: controller.stopListening,
                   onRepeat: controller.repeatLastGuidance,
                 ),

@@ -41,6 +41,7 @@ class EmergencyChatController extends ChangeNotifier {
   bool _isSending = false;
   bool _isListening = false;
   bool _isDispatching = false;
+  bool _shareWithGemini = false;
   bool _voiceRepliesEnabled = true;
   String? _error;
   String? _partialTranscript;
@@ -55,6 +56,7 @@ class EmergencyChatController extends ChangeNotifier {
   bool get isListening => _isListening;
   bool get isDispatching => _isDispatching;
   bool get voiceRepliesEnabled => _voiceRepliesEnabled;
+  bool get shareWithGemini => _shareWithGemini;
   String? get error => _error;
   String? get partialTranscript => _partialTranscript;
   DateTime? get lastLocationSync => _lastLocationSync;
@@ -148,6 +150,10 @@ class EmergencyChatController extends ChangeNotifier {
       _isSending = false;
       _safeNotify();
     }
+  }
+
+  void setGeminiConsent(bool consent) {
+    _shareWithGemini = consent;
   }
 
   /// Dictado por voz: escucha, muestra el parcial y envía automáticamente.
@@ -352,6 +358,9 @@ class EmergencyChatController extends ChangeNotifier {
     final current = incident!;
     return EmergencyContext(
       description: current.description,
+      incidentId: current.id,
+      accessToken: _session!.accessToken,
+      shareWithGemini: _shareWithGemini,
       address: current.address,
       latitude: current.latitude,
       longitude: current.longitude,

@@ -5,9 +5,11 @@ import 'app.dart';
 import 'core/config/env.dart';
 
 Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
   await Supabase.initialize(
-    url: 'https://tohowxjztirxddwnxtgw.supabase.co',
-    publishableKey: 'sb_publishable_-jUjU9zFRWw-tHuyReHR1g_LK1hL43Q',
+    url: Env.supabaseUrl,
+    publishableKey: Env.supabasePublishableKey,
   );
   runApp(const StaydoctApp());
 }
