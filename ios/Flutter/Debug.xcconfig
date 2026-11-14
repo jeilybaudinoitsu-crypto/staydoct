@@ -1,0 +1,5 @@
+#include "Generated.xcconfig"
+
+// Clave de Google Maps para iOS. Puedes definirla aquí o como variable de
+// entorno de build (`GOOGLE_MAPS_API_KEY`) en Xcode. Nunca la subas al repo.
+GOOGLE_MAPS_API_KEY=

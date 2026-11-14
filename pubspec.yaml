@@ -1,0 +1,48 @@
+name: staydoct
+description: "Staydoct — asistencia médica de emergencia con IA, geolocalización y servicios de salud."
+publish_to: 'none'
+
+version: 2.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI
+  cupertino_icons: ^1.0.8
+
+  # Navegación y estado
+  go_router: ^14.6.2
+  provider: ^6.1.2
+
+  # Backend (Supabase)
+  supabase_flutter: ^2.18.3
+
+  # IA generativa (Gemini REST)
+  http: ^1.2.2
+
+  # Voz (texto a voz / voz a texto)
+  flutter_tts: ^4.2.0
+  speech_to_text: ^7.0.0
+
+  # Geolocalización y mapas
+  geolocator: ^13.0.2
+  geocoding: ^3.0.0
+  google_maps_flutter: ^2.10.0
+
+  # Utilidades
+  shared_preferences: ^2.3.4
+  uuid: ^4.5.1
+  intl: ^0.19.0
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
