@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -28,19 +29,40 @@ class GeminiAssistantDataSource implements AiAssistantRepository {
       );
     }
 
-    final response = await _client.functions.invoke(
-      'gemini-assistant',
-      body: {
-        'incident_id': incidentId,
-        'access_token': accessToken,
-        'system_instruction': EmergencyPromptBuilder.systemInstruction(context),
-        'contents': _buildContents(history, context),
-      },
-    );
-    final rawBody = response.data is String
-        ? response.data as String
-        : jsonEncode(response.data);
-    return _parse(rawBody);
+    try {
+      final response = await _client.functions
+          .invoke(
+            'gemini-assistant',
+            body: {
+              'incident_id': incidentId,
+              'access_token': accessToken,
+              'system_instruction': EmergencyPromptBuilder.systemInstruction(
+                context,
+              ),
+              'contents': _buildContents(history, context),
+            },
+          )
+          .timeout(const Duration(seconds: 35));
+      final rawBody = response.data is String
+          ? response.data as String
+          : jsonEncode(response.data);
+      return _parse(rawBody);
+    } on AiException {
+      rethrow;
+    } on TimeoutException catch (error) {
+      throw AiException(
+        'Gemini tardó demasiado en responder. Intenta de nuevo o llama al 123.',
+        code: 'gemini_timeout',
+        cause: error,
+      );
+    } catch (error) {
+      throw AiException(
+        'No se pudo conectar con Gemini. Verifica tu conexión y que la función '
+        'gemini-assistant esté desplegada en Supabase.',
+        code: 'gemini_request_failed',
+        cause: error,
+      );
+    }
   }
 
   List<Map<String, dynamic>> _buildContents(

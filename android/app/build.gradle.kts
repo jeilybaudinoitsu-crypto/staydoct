@@ -12,6 +12,27 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+/** Busca el keystore relativo a `android/app/` y luego a `android/`. */
+fun resolveKeystore(path: String) =
+    listOf(file(path), rootProject.file(path)).firstOrNull { it.exists() }
+
+val releaseStoreFile = keystoreProperties.getProperty("storeFile")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.let(::resolveKeystore)
+
+/**
+ * Solo se firma con la clave de release si `android/key.properties` existe y
+ * apunta a un keystore válido. De lo contrario, el build de release usa la
+ * clave de debug para que `flutter build apk --release` no falle en máquinas
+ * sin credenciales (por ejemplo, CI). Un APK firmado con debug sirve para
+ * probar, pero no para publicar en Google Play.
+ */
+val canSignRelease = releaseStoreFile != null &&
+    !keystoreProperties.getProperty("storePassword").isNullOrBlank() &&
+    !keystoreProperties.getProperty("keyAlias").isNullOrBlank() &&
+    !keystoreProperties.getProperty("keyPassword").isNullOrBlank()
+
 android {
     namespace = "app.staydoct.mobile"
     compileSdk = flutter.compileSdkVersion
@@ -41,20 +62,28 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val storeFilePath = keystoreProperties.getProperty("storeFile")
-            if (!storeFilePath.isNullOrBlank()) {
-                storeFile = file(storeFilePath)
+        if (canSignRelease) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
             }
-            storePassword = keystoreProperties.getProperty("storePassword")
-            keyAlias = keystoreProperties.getProperty("keyAlias")
-            keyPassword = keystoreProperties.getProperty("keyPassword")
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (canSignRelease) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "Staydoct: no hay android/key.properties válido. " +
+                        "El APK de release se firmará con la clave de DEBUG " +
+                        "(apto para pruebas, no para Google Play).",
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

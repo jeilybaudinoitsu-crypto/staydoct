@@ -1,6 +1,7 @@
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -35,7 +36,12 @@ const tools = [
                 "true si requiere ambulancia; false solo si requiere orientación o traslado propio.",
             },
           },
-          required: ["severity", "summary", "recommendations"],
+          required: [
+            "severity",
+            "summary",
+            "recommendations",
+            "needs_ambulance",
+          ],
         },
       },
     ],
@@ -93,6 +99,8 @@ Deno.serve(async (request) => {
   const accessToken = input.access_token;
   const systemInstruction = input.system_instruction;
   const contents = input.contents;
+  const action = input.action;
+  const createLiveToken = action === "create_live_token";
   const validContents = Array.isArray(contents) &&
     contents.every((entry) => {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -122,10 +130,11 @@ Deno.serve(async (request) => {
     accessToken.length > 256 ||
     typeof systemInstruction !== "string" ||
     systemInstruction.length > 16_000 ||
-    !Array.isArray(contents) ||
-    contents.length === 0 ||
-    contents.length > 60 ||
-    !validContents
+    (!createLiveToken &&
+      (!Array.isArray(contents) ||
+        contents.length === 0 ||
+        contents.length > 60 ||
+        !validContents))
   ) {
     return jsonResponse({ error: "Invalid request fields." }, 400);
   }
@@ -162,6 +171,87 @@ Deno.serve(async (request) => {
     );
   }
 
+  if (createLiveToken) {
+    const liveModel = Deno.env.get("GEMINI_LIVE_MODEL") || "gemini-3.8-live";
+    const modelName = liveModel.startsWith("models/")
+      ? liveModel
+      : `models/${liveModel}`;
+    const liveConfig = {
+      systemInstruction: {
+        parts: [{ text: systemInstruction }],
+      },
+      inputAudioTranscription: { languageCodes: ["es-CO", "es-ES"] },
+      outputAudioTranscription: { languageCodes: ["es-CO", "es-ES"] },
+      tools,
+      generationConfig: {
+        temperature: 0.35,
+        maxOutputTokens: 180,
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: "Aoede" },
+          },
+        },
+      },
+    };
+
+    let tokenResponse: Response;
+    try {
+      tokenResponse = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/auth_tokens",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": geminiApiKey,
+          },
+          signal: AbortSignal.timeout(15_000),
+          body: JSON.stringify({
+            uses: 1,
+            expireTime: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
+            liveConnectConstraints: {
+              model: modelName,
+              config: liveConfig,
+            },
+          }),
+        },
+      );
+    } catch (error) {
+      console.error("Gemini Live token request failed.", error);
+      return jsonResponse({ error: "AI voice service is unavailable." }, 502);
+    }
+
+    if (!tokenResponse.ok) {
+      console.error(
+        "Gemini Live token request failed.",
+        tokenResponse.status,
+      );
+      return jsonResponse(
+        { error: "AI voice service is unavailable." },
+        tokenResponse.status >= 500 ? 502 : 503,
+      );
+    }
+
+    let tokenBody: Record<string, unknown>;
+    try {
+      tokenBody = await tokenResponse.json();
+    } catch (error) {
+      console.error("Gemini Live token response was invalid.", error);
+      return jsonResponse({ error: "Invalid AI voice service response." }, 502);
+    }
+    if (typeof tokenBody.name !== "string" || tokenBody.name.length === 0) {
+      console.error("Gemini Live token response did not contain a token.");
+      return jsonResponse({ error: "Invalid AI voice service response." }, 502);
+    }
+
+    return jsonResponse({
+      token: tokenBody.name,
+      model: modelName,
+      config: liveConfig,
+    });
+  }
+
   const model = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
   const geminiUrl = new URL(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -186,7 +276,7 @@ Deno.serve(async (request) => {
         generationConfig: {
           temperature: 0.35,
           topP: 0.9,
-          maxOutputTokens: 700,
+          maxOutputTokens: 160,
         },
         safetySettings: [
           {

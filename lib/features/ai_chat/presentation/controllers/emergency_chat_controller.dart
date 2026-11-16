@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../../core/errors/app_exception.dart';
@@ -6,6 +8,7 @@ import '../../../../core/services/prefs_service.dart';
 import '../../../../core/services/speech_service.dart';
 import '../../../emergency/domain/entities/emergency_incident.dart';
 import '../../../emergency/domain/repositories/emergency_repository.dart';
+import '../../data/datasources/gemini_live_audio_data_source.dart';
 import '../../domain/entities/chat_message.dart';
 import '../../domain/repositories/ai_assistant_repository.dart';
 
@@ -22,17 +25,20 @@ class EmergencyChatController extends ChangeNotifier {
     required AiAssistantRepository assistant,
     required EmergencyRepository emergencies,
     required SpeechService speech,
+    required GeminiLiveAudioDataSource liveAudio,
     required PrefsService prefs,
     required LocationService locationService,
-  })  : _assistant = assistant,
-        _emergencies = emergencies,
-        _speech = speech,
-        _prefs = prefs,
-        _locationService = locationService;
+  }) : _assistant = assistant,
+       _emergencies = emergencies,
+       _speech = speech,
+       _liveAudio = liveAudio,
+       _prefs = prefs,
+       _locationService = locationService;
 
   final AiAssistantRepository _assistant;
   final EmergencyRepository _emergencies;
   final SpeechService _speech;
+  final GeminiLiveAudioDataSource _liveAudio;
   final PrefsService _prefs;
   final LocationService _locationService;
 
@@ -40,11 +46,14 @@ class EmergencyChatController extends ChangeNotifier {
   final List<ChatMessage> _messages = [];
   bool _isSending = false;
   bool _isListening = false;
+  bool _isLiveVoiceActive = false;
   bool _isDispatching = false;
   bool _shareWithGemini = false;
   bool _voiceRepliesEnabled = true;
   String? _error;
   String? _partialTranscript;
+  final StringBuffer _liveUserTranscript = StringBuffer();
+  final StringBuffer _liveAssistantTranscript = StringBuffer();
   DateTime? _lastLocationSync;
   AiReplySource? _lastSource;
   bool _disposed = false;
@@ -88,7 +97,7 @@ class EmergencyChatController extends ChangeNotifier {
 
   Future<void> sendMessage(String rawText, {bool isVoice = false}) async {
     final text = rawText.trim();
-    if (text.isEmpty || _isSending || _session == null) return;
+    if (text.isEmpty || _isSending || _isListening || _session == null) return;
 
     _error = null;
     _partialTranscript = null;
@@ -156,14 +165,43 @@ class EmergencyChatController extends ChangeNotifier {
     _shareWithGemini = consent;
   }
 
-  /// Dictado por voz: escucha, muestra el parcial y envía automáticamente.
+  /// Abre voz Live con Gemini o usa dictado como alternativa.
   Future<void> sendVoiceMessage() async {
     if (_isListening || _isSending) return;
     _error = null;
+    var liveConnectionFailed = false;
     _isListening = true;
     _partialTranscript = '';
     _safeNotify();
 
+    if (_shareWithGemini && _voiceRepliesEnabled) {
+      try {
+        await _liveAudio.start(
+          context: _buildContext(),
+          onTranscript: _onLiveTranscript,
+          onTurnComplete: _finishLiveTurn,
+          onToolCall: _handleLiveToolCall,
+          onError: _onLiveAudioError,
+        );
+        _isLiveVoiceActive = true;
+        return;
+      } catch (error) {
+        liveConnectionFailed = true;
+        _error =
+            'Gemini Live no inició: ${_describeLiveError(error)} Se usará el dictado estándar.';
+        _safeNotify();
+        if (_disposed) return;
+      }
+    }
+
+    await _listenAndSendVoiceMessage();
+    if (liveConnectionFailed && _error == null) {
+      _error = 'Se usó el dictado estándar porque Live no estaba disponible.';
+      _safeNotify();
+    }
+  }
+
+  Future<void> _listenAndSendVoiceMessage() async {
     try {
       final transcript = await _speech.listenOnce(
         onPartial: (partial) {
@@ -183,15 +221,138 @@ class EmergencyChatController extends ChangeNotifier {
     } catch (error) {
       _isListening = false;
       _partialTranscript = null;
-      _error = 'No pudimos usar el micrófono. Escribe tu mensaje, por favor.';
+      _error =
+          'No pudimos usar el micrófono. Escribe tu mensaje, por favor. ($error)';
       _safeNotify();
     }
   }
 
   Future<void> stopListening() async {
-    await _speech.stopListening();
+    if (_isLiveVoiceActive) {
+      try {
+        await _liveAudio.stop();
+      } catch (error) {
+        _error = 'No se pudo cerrar correctamente el audio: $error';
+      } finally {
+        _isLiveVoiceActive = false;
+        _finishLiveTurn();
+      }
+    } else {
+      await _speech.stopListening();
+    }
     _isListening = false;
     _safeNotify();
+  }
+
+  void _onLiveTranscript(String text, {required bool isUser}) {
+    if (text.isEmpty) return;
+    final transcript = isUser ? _liveUserTranscript : _liveAssistantTranscript;
+    transcript.write(text);
+    if (isUser) _partialTranscript = transcript.toString();
+    _safeNotify();
+  }
+
+  void _finishLiveTurn() {
+    final userText = _liveUserTranscript.toString().trim();
+    final assistantText = _liveAssistantTranscript.toString().trim();
+    _liveUserTranscript.clear();
+    _liveAssistantTranscript.clear();
+    _partialTranscript = null;
+
+    if (userText.isNotEmpty) {
+      _messages.add(
+        ChatMessage(
+          id: 'user-${DateTime.now().microsecondsSinceEpoch}',
+          role: ChatRole.user,
+          content: userText,
+          createdAt: DateTime.now(),
+          isVoice: true,
+        ),
+      );
+      _log(ChatRole.user, userText);
+    }
+    if (assistantText.isNotEmpty) {
+      _messages.add(
+        ChatMessage(
+          id: 'assistant-${DateTime.now().microsecondsSinceEpoch}',
+          role: ChatRole.assistant,
+          content: assistantText,
+          createdAt: DateTime.now(),
+          isVoice: true,
+        ),
+      );
+      _log(ChatRole.assistant, assistantText);
+    }
+    _lastSource = AiReplySource.gemini;
+    _safeNotify();
+  }
+
+  void _onLiveAudioError(Object error) {
+    if (_disposed || !_isLiveVoiceActive) return;
+    _error =
+        'El audio en tiempo real se interrumpió: ${_describeLiveError(error)}';
+    _isLiveVoiceActive = false;
+    _isListening = false;
+    _partialTranscript = null;
+    _finishLiveTurn();
+    unawaited(_stopLiveAfterError());
+  }
+
+  Future<void> _stopLiveAfterError() async {
+    try {
+      await _liveAudio.stop();
+    } catch (error) {
+      if (_disposed) return;
+      _error = 'No se pudo cerrar correctamente el audio: $error';
+      _safeNotify();
+    }
+  }
+
+  String _describeLiveError(Object error) {
+    if (error is AppException) return error.message;
+    if (error is StateError) return error.message;
+    if (error is TimeoutException) return 'se agotó el tiempo de conexión.';
+    return 'error de conexión (${error.runtimeType}).';
+  }
+
+  Future<Map<String, Object?>> _handleLiveToolCall({
+    required String id,
+    required String name,
+    required Map<String, dynamic> arguments,
+  }) async {
+    if (name != 'dispatch_emergency_services') {
+      throw StateError('Gemini solicitó una herramienta no disponible.');
+    }
+    if (isDispatched) {
+      return {'result': 'Los servicios de emergencia ya fueron notificados.'};
+    }
+
+    final summary = (arguments['summary'] as String?)?.trim();
+    final recommendations =
+        (arguments['recommendations'] as List?)
+            ?.whereType<String>()
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .take(4)
+            .toList() ??
+        const <String>[];
+    final succeeded = await _dispatch(
+      AiDispatchRequest(
+        severity: SeverityLevel.fromDb(arguments['severity'] as String?),
+        summary: summary == null || summary.isEmpty
+            ? 'Emergencia reportada desde Staydoct.'
+            : summary,
+        recommendations: recommendations.isEmpty
+            ? const ['Mantén la calma y no dejes sola a la persona.']
+            : recommendations,
+        needsAmbulance: arguments['needs_ambulance'] as bool? ?? true,
+      ),
+    );
+    return {
+      'result': succeeded
+          ? 'Ayuda notificada correctamente.'
+          : 'No se pudo confirmar el despacho; indica que llamen al 123.',
+    };
   }
 
   /// Despacho manual: el usuario no debe depender de la IA para pedir ayuda.
@@ -206,7 +367,8 @@ class EmergencyChatController extends ChangeNotifier {
     await _dispatch(
       AiDispatchRequest(
         severity: current.severity,
-        summary: summary ??
+        summary:
+            summary ??
             lastUserMessage ??
             (current.description.isEmpty
                 ? 'Emergencia reportada desde Staydoct.'
@@ -221,9 +383,9 @@ class EmergencyChatController extends ChangeNotifier {
     );
   }
 
-  Future<void> _dispatch(AiDispatchRequest request) async {
+  Future<bool> _dispatch(AiDispatchRequest request) async {
     final current = _session;
-    if (current == null || _isDispatching) return;
+    if (current == null || _isDispatching) return false;
 
     _isDispatching = true;
     _safeNotify();
@@ -257,7 +419,10 @@ class EmergencyChatController extends ChangeNotifier {
         ),
       );
       _log(ChatRole.system, message, metadata: {'event': 'dispatched'});
-      if (_voiceRepliesEnabled) await _speech.speak(message);
+      if (_voiceRepliesEnabled && !_isLiveVoiceActive) {
+        await _speech.speak(message);
+      }
+      return true;
     } catch (error) {
       final message = error is AppException
           ? error.message
@@ -273,6 +438,7 @@ class EmergencyChatController extends ChangeNotifier {
           isError: true,
         ),
       );
+      return false;
     } finally {
       _isDispatching = false;
       _safeNotify();
@@ -329,6 +495,7 @@ class EmergencyChatController extends ChangeNotifier {
     _voiceRepliesEnabled = !_voiceRepliesEnabled;
     await _prefs.saveVoiceReplies(_voiceRepliesEnabled);
     if (!_voiceRepliesEnabled) {
+      if (_isLiveVoiceActive) await stopListening();
       await _speech.stopSpeaking();
     } else {
       final lastAssistant = _lastWhere(
@@ -398,7 +565,11 @@ class EmergencyChatController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _speech.stopListening();
+    if (_isLiveVoiceActive) {
+      _liveAudio.stop();
+    } else {
+      _speech.stopListening();
+    }
     _speech.stopSpeaking();
     super.dispose();
   }

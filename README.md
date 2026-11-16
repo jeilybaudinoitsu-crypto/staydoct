@@ -109,8 +109,10 @@ flutter run \
 ```
 
 Gemini se configura en el backend de Supabase; la app conserva el protocolo
-local como alternativa si la función remota no está disponible. Sin
-`GOOGLE_MAPS_API_KEY` se muestra un panel informativo en lugar del mapa.
+local como alternativa si la función remota no está disponible. La voz en
+tiempo real usa Gemini Live y transmite PCM mono de 16 kHz desde el micrófono;
+las respuestas llegan como PCM mono de 24 kHz. Sin `GOOGLE_MAPS_API_KEY` se
+muestra un panel informativo en lugar del mapa.
 
 ### Compilar
 
@@ -136,6 +138,14 @@ flutter build web
 Para firmar Android en release local, guarda `android/key.properties` (ignorado
 por Git) con `storeFile`, `storePassword`, `keyAlias` y `keyPassword`, y conserva
 el keystore fuera del repositorio. No uses ni compartas la clave de debug.
+
+Este proyecto ya incluye una clave de release local
+(`android/app/staydoct-release.jks`) y su `android/key.properties`; ambos están
+ignorados por Git. **Haz una copia de seguridad de los dos ahora**: la misma
+clave debe usarse en todas las actualizaciones distribuidas y su contraseña vive
+en `key.properties`. Si el archivo no existe (por ejemplo en CI), el build de
+release usa la clave de debug para no fallar, pero ese APK no sirve para Google
+Play. `storeFile` puede ser relativo a `android/app/` o a `android/`.
 
 El workflow [Android APK](.github/workflows/android-apk.yml) crea un APK
 firmado al ejecutarlo manualmente o al subir una etiqueta `v*`; en este último
@@ -180,7 +190,10 @@ Gemini solo se configura como secreto de la Edge Function; no la pases con
 1. Crea una clave en Google AI Studio.
 2. En Supabase Dashboard, abre **Edge Functions → Secrets** y añade
    `GEMINI_API_KEY`. Opcionalmente, añade `GEMINI_MODEL` para cambiar el modelo
-   del servidor (el valor por defecto es `gemini-2.0-flash`).
+   del chat escrito (el valor por defecto es `gemini-2.0-flash`) y
+   `GEMINI_LIVE_MODEL` para cambiar el modelo de voz (el recomendado y valor
+   por defecto es `gemini-3.8-live`). La clave debe tener acceso a Gemini Live;
+   no se necesita otra clave ni configuración de base de datos.
 3. Enlaza el directorio con el proyecto Supabase y despliega
    `supabase/functions/gemini-assistant` con la CLI de Supabase:
 
@@ -189,12 +202,20 @@ Gemini solo se configura como secreto de la Edge Function; no la pases con
    supabase functions deploy gemini-assistant
    ```
 
+   Si el navegador muestra un error CORS y la petición `OPTIONS` devuelve
+   `NOT_FOUND`, la función no está desplegada en el proyecto indicado por
+   `SUPABASE_URL`. Confirma que el proyecto enlazado sea el correcto y vuelve
+   a desplegarla antes de probar desde la app.
+
 La función tiene la verificación JWT del gateway desactivada porque la pantalla
 de emergencia permite continuar sin una cuenta. Antes de llamar a Gemini,
 valida el ID y el token de acceso del incidente mediante el RPC
 `get_emergency_status`. No uses una clave `service_role` en la app. La función
-solo recibe texto del incidente y de la conversación; no envía coordenadas ni
-la dirección GPS a Gemini.
+valida la sesión antes de responder por texto o emitir un token de un solo uso
+para Gemini Live. El token temporal se limita al modelo, las instrucciones y
+las herramientas de Staydoct. En modo de voz, el audio se envía en tiempo real
+a Google; el ID y token de acceso del incidente se quedan en Supabase y las
+coordenadas GPS no se envían a Gemini.
 
 ---
 
@@ -503,9 +524,13 @@ Detalles relevantes:
   incluye reglas de primeros auxilios y de seguridad.
 - Antes del primer mensaje se pregunta si se permite enviar el chat a Gemini;
   sin consentimiento, se usa solo el protocolo local. La ubicación GPS no se
-  añade a la solicitud Gemini.
-- Timeout de 30 s en la Edge Function; cualquier fallo cae al protocolo local
-  sin cortar la conversación.
+  añade a la solicitud Gemini. Al usar el micrófono con Gemini, Flutter pide
+  un token temporal a la Edge Function y transmite audio PCM mono de 16 kHz a
+  Gemini Live; reproduce las respuestas PCM mono de 24 kHz. El micrófono se
+  cierra al detener la sesión.
+- El chat escrito conserva el timeout de 30 s y el protocolo local como
+  alternativa. Si Live no conecta, la app informa el problema y recurre al
+  dictado estándar.
 
 ### Protocolo local de respaldo
 
@@ -517,7 +542,9 @@ emergencia funcione incluso sin clave, sin red o con cuota agotada.
 
 ### Voz
 
-`SpeechService` encapsula `speech_to_text` y `flutter_tts`:
+`GeminiLiveAudioDataSource` transmite audio PCM directamente entre el micrófono
+y Gemini; `SpeechService` mantiene el dictado local de respaldo y el TTS para
+respuestas escritas:
 
 - dictado en español (`es_ES`) con cierre por pausa de 4 s;
 - lectura en voz alta de las respuestas de la IA (recortadas a 900 caracteres);
@@ -579,9 +606,11 @@ tratamientos). El análisis estático está limpio.
   solicitud a Gemini. Antes del primer envío del chat se informa al usuario y
   se le permite continuar con Gemini o usar solo el protocolo local. La
   conversación también se almacena en el registro del incidente de Supabase.
-  El dictado de voz usa el proveedor de reconocimiento configurado en el
-  dispositivo; declara también ese tratamiento en la política de privacidad y
-  en Seguridad de datos.
+  Al usar voz con Gemini, el audio se envía en tiempo real a Google y las
+  transcripciones se almacenan en el registro de la conversación; Staydoct no
+  guarda el audio crudo en Supabase. Al usar el modo local, el audio se procesa
+  con el servicio de dictado del dispositivo. Declara ambos tratamientos en
+  la política de privacidad y en Seguridad de datos.
 - **Política de privacidad**: publica una URL accesible y no autenticada que
   describa datos recogidos, ubicación, micrófono/dictado, historial, Gemini,
   Supabase, conservación, contacto del responsable y eliminación de datos.

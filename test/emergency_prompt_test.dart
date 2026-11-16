@@ -18,4 +18,14 @@ void main() {
     expect(prompt, isNot(contains('4.711')));
     expect(prompt, isNot(contains('-74.0721')));
   });
+
+  test('Gemini emergency instructions require short, calm replies', () {
+    const context = EmergencyContext(description: 'No puede respirar');
+
+    final prompt = EmergencyPromptBuilder.systemInstruction(context);
+
+    expect(prompt, contains('Tono calmado, directo y conciso'));
+    expect(prompt, contains('máximo 45 palabras'));
+    expect(prompt, contains('una sola indicación inmediata por turno'));
+  });
 }

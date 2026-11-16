@@ -101,7 +101,7 @@ class SpeechService {
     if (_ttsInitialized) return true;
     try {
       await _tts.setLanguage('es-ES');
-      await _tts.setSpeechRate(0.48);
+      await _tts.setSpeechRate(0.85);
       await _tts.setPitch(1.0);
       await _tts.awaitSpeakCompletion(true);
       _ttsInitialized = true;

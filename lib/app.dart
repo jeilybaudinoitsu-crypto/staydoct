@@ -9,6 +9,7 @@ import 'core/services/prefs_service.dart';
 import 'core/services/speech_service.dart';
 import 'core/theme/app_theme.dart';
 import 'features/ai_chat/data/datasources/gemini_assistant_data_source.dart';
+import 'features/ai_chat/data/datasources/gemini_live_audio_data_source.dart';
 import 'features/ai_chat/data/datasources/local_triage_assistant.dart';
 import 'features/ai_chat/data/repositories/ai_assistant_repository_impl.dart';
 import 'features/ai_chat/domain/repositories/ai_assistant_repository.dart';
@@ -71,6 +72,9 @@ class StaydoctApp extends StatelessWidget {
         ),
         Provider<GeminiAssistantDataSource>(
           create: (_) => GeminiAssistantDataSource(supabase),
+        ),
+        Provider<GeminiLiveAudioDataSource>(
+          create: (_) => GeminiLiveAudioDataSource(supabase),
         ),
         Provider<LocalTriageAssistant>(
           create: (_) => LocalTriageAssistant(),

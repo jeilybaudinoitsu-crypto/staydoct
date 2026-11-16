@@ -14,6 +14,7 @@ import '../../../../core/widgets/buttons.dart';
 import '../../../../core/widgets/layout.dart';
 import '../../../emergency/domain/entities/emergency_incident.dart';
 import '../../../emergency/domain/repositories/emergency_repository.dart';
+import '../../../ai_chat/data/datasources/gemini_live_audio_data_source.dart';
 import '../../../ai_chat/domain/entities/chat_message.dart';
 import '../../../ai_chat/domain/repositories/ai_assistant_repository.dart';
 import '../../../ai_chat/presentation/controllers/emergency_chat_controller.dart';
@@ -44,6 +45,7 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
       assistant: context.read<AiAssistantRepository>(),
       emergencies: context.read<EmergencyRepository>(),
       speech: context.read<SpeechService>(),
+      liveAudio: context.read<GeminiLiveAudioDataSource>(),
       prefs: context.read<PrefsService>(),
       locationService: context.read<LocationService>(),
     );
@@ -109,8 +111,10 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
             'podría compartirse. Los mensajes también se guardan en el registro '
             'del incidente de Staydoct. Puedes continuar con el protocolo '
             'local sin enviar el chat a Gemini. La IA no sustituye al 123 ni '
-            'a profesionales de salud. Si usas dictado, el servicio de voz '
-            'configurado en tu dispositivo procesa el audio para transcribirlo.',
+            'a profesionales de salud. Al usar Gemini con el micrófono, el '
+            'audio se transmite en tiempo real a Google para generar la '
+            'respuesta hablada. Si eliges el protocolo local, el servicio de '
+            'dictado del dispositivo procesa el audio.',
           ),
           actions: [
             TextButton(
@@ -158,15 +162,19 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
               titleSpacing: 0,
               title: Row(
                 children: [
-                  _VeraAvatar(online: !controller.isSending),
+                  _VeraAvatar(
+                    online: !controller.isSending && !controller.isListening,
+                  ),
                   const SizedBox(width: 10),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text('Vera'),
                       Text(
-                        controller.isSending
-                            ? 'Escribiendo…'
+                        controller.isListening
+                            ? 'Escuchando…'
+                            : controller.isSending
+                            ? 'Respondiendo…'
                             : 'Asistente de emergencias',
                         style: const TextStyle(
                           fontSize: 11,
@@ -235,7 +243,7 @@ class _EmergencyChatPageState extends State<EmergencyChatPage> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: QuickReplies(
-                      enabled: !controller.isBusy,
+                      enabled: !controller.isBusy && !controller.isListening,
                       replies: const [
                         'Me duele el pecho',
                         'No puede respirar',
@@ -639,7 +647,7 @@ class _InputBar extends StatelessWidget {
             Expanded(
               child: TextField(
                 controller: controller,
-                enabled: !isSending,
+                enabled: !isSending && !isListening,
                 minLines: 1,
                 maxLines: 4,
                 textCapitalization: TextCapitalization.sentences,
@@ -653,13 +661,13 @@ class _InputBar extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             IconButton(
-              onPressed: isSending ? null : onRepeat,
+              onPressed: isSending || isListening ? null : onRepeat,
               tooltip: 'Repetir última indicación',
               icon: const Icon(Icons.replay_rounded,
                   size: 20, color: AppColors.textSecondary),
             ),
             IconButton.filled(
-              onPressed: isSending ? null : onSend,
+              onPressed: isSending || isListening ? null : onSend,
               style: IconButton.styleFrom(
                 backgroundColor: AppColors.navy,
                 minimumSize: const Size(46, 46),

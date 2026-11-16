@@ -13,9 +13,9 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Staydoct comparte tu ubicación con la ambulancia mientras un reporte de emergencia está activo.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Staydoct usa el micrófono para que puedas describir tu emergencia sin escribir.</string>
+	<string>Staydoct usa el micrófono para captar tu voz. Si eliges Gemini, el audio se envía en tiempo real a Google para generar orientación hablada.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Staydoct convierte tu voz en texto para entender la emergencia más rápido.</string>
+	<string>Staydoct usa el dictado del dispositivo cuando Gemini Live no está disponible o eliges el protocolo local.</string>
 	<key>GMSApiKey</key>
 	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>CFBundleExecutable</key>
